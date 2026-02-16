@@ -21,6 +21,16 @@ from datetime import datetime
 
 current_version = 1
 
+def _parse_iso_ts(value):
+    if value is None:
+        return None
+    if value.endswith('Z'):
+        value = value.replace('Z', '+00:00')
+    try:
+        return int(datetime.fromisoformat(value).timestamp())
+    except ValueError:
+        return None
+
 def open_db():
     global db, version
     addon = xbmcaddon.Addon()
@@ -63,18 +73,24 @@ def get_live_epg():
     epg_data = {}
     epg = {}
     epg_next = {}
-    current = False
     post = {"payload":{"criteria":{"channelSetId":"channel_list.1","viewport":{"channelRange":{"from":0,"to":200},"timeRange":{"from":datetime.fromtimestamp(datetime.now().timestamp()-7200).strftime('%Y-%m-%dT%H:%M:%S') + '.000Z',"to":datetime.fromtimestamp(datetime.now().timestamp()).strftime('%Y-%m-%dT%H:%M:%S') + '.000Z'},"schema":"EpgViewportAbsolute"}},"requestedOutput":{"channelList":"none","datePicker":False,"channelSets":False}}}
     epg_data = get_epg_data(post, None)
+    currentts = datetime.now().timestamp()
+    items_by_channel = {}
     for key in epg_data:
         item = epg_data[key]
-        if current == True:
-            epg_next.update({item['channel_id'] : item})
-            current = False
-        currentts = datetime.now().timestamp()
-        if item['startts'] < currentts and item['endts'] > currentts:
-            epg.update({item['channel_id'] : item})
-            current = True
+        channel = item['channel_id']
+        if channel not in items_by_channel:
+            items_by_channel[channel] = []
+        items_by_channel[channel].append(item)
+    for channel in items_by_channel:
+        items = sorted(items_by_channel[channel], key = lambda x: x['startts'])
+        for i, item in enumerate(items):
+            if item['startts'] < currentts and item['endts'] > currentts:
+                epg.update({channel : item})
+                if i + 1 < len(items):
+                    epg_next.update({channel : items[i + 1]})
+                break
     return epg, epg_next
 
 def get_channel_epg(channel_id, from_ts, to_ts):
@@ -95,24 +111,39 @@ def get_epg_data(post, channel_id):
     api = API()
     epg = {}
     data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/epg.display', data = post, session = session)
-    if 'err' not in data:
+    if 'err' not in data and 'schedule' in data:
         for channel in data['schedule']:
-            if channel['channelId'] in channels_list:
-                if channel_id is None or channel['channelId'] == channel_id:
-                    for item in channel['items']:
-                        startts = int(datetime.fromisoformat(item['startAt']).timestamp())
-                        endts = int(datetime.fromisoformat(item['endAt']).timestamp())
-                        if 'contentType' in item['actions'][0]['params'] or 'contentId' in item['actions'][0]['params']['payload']:
-                            if item['actions'][0]['params']['contentType'] in ['show','movie']:
-                                id = item['actions'][0]['params']['payload']['deeplink']['epgItem']
-                            else:
-                                id = item['actions'][0]['params']['payload']['contentId']
-                            if channel_id is None:
-                                key = channel['channelId'] + str(startts)
-                            else:
-                                key = startts
-                            epg_item = {'id' : id, 'type' : item['actions'][0]['params']['contentType'], 'referenceid' : item['referenceId'], 'title' : item['title'], 'channel_id' : channel['channelId'], 'description' : item['description'], 'startts' : startts, 'endts' : endts, 'cover' : item['image'].replace('{WIDTH}', '480').replace('{HEIGHT}', '320'), 'poster' : item['image'].replace('{WIDTH}', '480').replace('{HEIGHT}', '320')}
-                            epg.update({key : epg_item})
+            if 'channelId' not in channel or channel['channelId'] not in channels_list:
+                continue
+            if channel_id is not None and channel['channelId'] != channel_id:
+                continue
+            for item in channel.get('items', []):
+                try:
+                    startts = _parse_iso_ts(item.get('startAt'))
+                    endts = _parse_iso_ts(item.get('endAt'))
+                    if startts is None or endts is None:
+                        continue
+                    actions = item.get('actions', [])
+                    if len(actions) == 0:
+                        continue
+                    params = actions[0].get('params', {})
+                    payload = params.get('payload', {})
+                    content_type = params.get('contentType', '')
+                    if content_type in ['show', 'movie'] and 'deeplink' in payload and 'epgItem' in payload['deeplink']:
+                        id = payload['deeplink']['epgItem']
+                    elif 'contentId' in payload:
+                        id = payload['contentId']
+                    else:
+                        continue
+                    if channel_id is None:
+                        key = channel['channelId'] + str(startts)
+                    else:
+                        key = startts
+                    image = item.get('image') or ''
+                    epg_item = {'id' : id, 'type' : content_type, 'referenceid' : item.get('referenceId', ''), 'title' : item.get('title', ''), 'channel_id' : channel['channelId'], 'description' : item.get('description', ''), 'startts' : startts, 'endts' : endts, 'cover' : image.replace('{WIDTH}', '480').replace('{HEIGHT}', '320'), 'poster' : image.replace('{WIDTH}', '480').replace('{HEIGHT}', '320')}
+                    epg.update({key : epg_item})
+                except Exception:
+                    continue
         if len(epg) == 0 and channel_id is not None:
             channels = Channels()
             if channels.favorites == 1:

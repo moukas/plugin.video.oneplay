@@ -13,7 +13,16 @@ from resources.lib.utils import plugin_id, replace_by_html_entity
 from resources.lib.epg import get_day_epg, get_channel_epg
 from resources.lib.recordings import add_recording
 
-tz_offset = int(datetime.now(timezone.utc).astimezone().utcoffset().total_seconds() / 3600)
+def _xmltv_tz_offset():
+    offset = datetime.now(timezone.utc).astimezone().utcoffset()
+    if offset is None:
+        return '+0000'
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = '+' if total_minutes >= 0 else '-'
+    total_minutes = abs(total_minutes)
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return sign + str(hours).zfill(2) + str(minutes).zfill(2)
 
 def save_file_test():
     addon = xbmcaddon.Addon()  
@@ -91,6 +100,8 @@ def generate_epg(output_file = '', show_progress = True):
     channels_list = channels.get_channels_list('channel_number')
     channels_list_by_id = channels.get_channels_list('id')
     if len(channels_list) > 0:
+        file = None
+        dialog = None
         if save_file_test() == 0:
             xbmcgui.Dialog().notification('Oneplay', 'Chyba při uložení EPG', xbmcgui.NOTIFICATION_ERROR, 5000)
             return
@@ -113,7 +124,7 @@ def generate_epg(output_file = '', show_progress = True):
                     channel = channels_list[number]['name']
                     content = content + '    <channel id="' + replace_by_html_entity(channel) + '">\n'
                     content = content + '            <display-name lang="cs">' +  replace_by_html_entity(channel) + '</display-name>\n'
-                    content = content + '            <icon src="' + logo + '" />\n'
+                    content = content + '            <icon src="' + replace_by_html_entity(logo) + '" />\n'
                     content = content + '    </channel>\n'
                 file.write(bytearray((content).encode('utf-8')))
                 today_date = datetime.today() 
@@ -130,16 +141,17 @@ def generate_epg(output_file = '', show_progress = True):
                     cnt = 0
                     content = ''
                     epg = get_day_epg(today_start_ts + day*60*60*24, today_end_ts + day*60*60*24)
+                    tz_offset = _xmltv_tz_offset()
                     for ts in sorted(epg.keys()):
                         epg_item = epg[ts]
                         if epg_item['channel_id'] in channels_list_by_id:
                             starttime = datetime.fromtimestamp(epg_item['startts']).strftime('%Y%m%d%H%M%S')
                             endtime = datetime.fromtimestamp(epg_item['endts']).strftime('%Y%m%d%H%M%S')
-                            content = content + '    <programme start="' + starttime + ' +0' + str(tz_offset) + '00" stop="' + endtime + ' +0' + str(tz_offset) + '00" channel="' +  replace_by_html_entity(channels_list_by_id[epg_item['channel_id']]['name']) + '">\n'
+                            content = content + '    <programme start="' + starttime + ' ' + tz_offset + '" stop="' + endtime + ' ' + tz_offset + '" channel="' +  replace_by_html_entity(channels_list_by_id[epg_item['channel_id']]['name']) + '">\n'
                             content = content + '       <title lang="cs">' +  replace_by_html_entity(epg_item['title']) + '</title>\n'
                             if epg_item['description'] != None and len(epg_item['description']) > 0:
                                 content = content + '       <desc lang="cs">' +  replace_by_html_entity(epg_item['description']) + '</desc>\n'
-                            content = content + '       <icon src="' + epg_item['poster'] + '"/>\n'
+                            content = content + '       <icon src="' + replace_by_html_entity(epg_item.get('poster', '')) + '"/>\n'
                             content = content + '    </programme>\n'
                             cnt = cnt + 1
                             if cnt > 20:
@@ -154,8 +166,9 @@ def generate_epg(output_file = '', show_progress = True):
                 if show_progress == True or addon.getSetting('epg_info') == 'true':
                     xbmcgui.Dialog().notification('Oneplay', 'EPG bylo uložené', xbmcgui.NOTIFICATION_INFO, 5000)    
         except Exception:
-            file.close()
-            if show_progress == True:
+            if file is not None:
+                file.close()
+            if show_progress == True and dialog is not None:
                 dialog.close()
             xbmcgui.Dialog().notification('Oneplay', 'Chyba při generování EPG!', xbmcgui.NOTIFICATION_ERROR, 5000)
     else:

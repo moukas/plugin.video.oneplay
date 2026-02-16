@@ -5,12 +5,13 @@ import xbmcaddon
 import json
 import gzip 
 import socket
+import traceback
 
 from websocket import create_connection
 import uuid
 
 from urllib.request import urlopen, Request
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from resources.lib.utils import appVersion
 
@@ -20,6 +21,7 @@ class API:
 
     def call_api(self, url, data, session = None, sensitive = False):
         addon = xbmcaddon.Addon()
+        ws = None
         if session is not None:
             self.headers['Authorization'] = 'Bearer ' + session.token
         if addon.getSetting('log_request_url') == 'true':
@@ -77,16 +79,30 @@ class API:
                 ws.close()
                 return []
         except HTTPError as e:
-            xbmc.log('Oneplay > Chyba při volání '+ str(url) + ': ' + e.reason)
-            ws.close()
-            return { 'err' : e.reason }  
+            xbmc.log('Oneplay > Chyba při volání ' + str(url) + ': ' + str(e.reason))
+            if ws is not None:
+                ws.close()
+            return { 'err' : str(e.reason) }  
+        except URLError as e:
+            xbmc.log('Oneplay > Chyba při volání ' + str(url) + ': ' + str(e.reason))
+            if ws is not None:
+                ws.close()
+            return { 'err' : str(e.reason) }  
         except socket.timeout:
             xbmc.log('Oneplay > Timout volání '+ str(url))
             xbmc.log('Oneplay > Timout volání '+ str(data))
-            ws.close()
+            if ws is not None:
+                ws.close()
             return { 'err' : 'timeout' }  
         except socket.error:
             xbmc.log('Oneplay > Timout volání '+ str(url))
             xbmc.log('Oneplay > Timout volání '+ str(data))
-            ws.close()
+            if ws is not None:
+                ws.close()
             return { 'err' : 'timeout' }  
+        except Exception as e:
+            xbmc.log('Oneplay > Neocekavana chyba API ' + str(url) + ': ' + str(e))
+            xbmc.log('Oneplay > ' + traceback.format_exc())
+            if ws is not None:
+                ws.close()
+            return { 'err' : 'api_exception' }
