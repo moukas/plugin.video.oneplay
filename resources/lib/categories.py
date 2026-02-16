@@ -65,7 +65,9 @@ def item_data(item):
                     subtitle = label['name']
     if len(subtitle) > 1:
         title = item['title'] + '\n' + get_label_color(subtitle, color)
-    image = item['image']['image'].replace('{WIDTH}', '320').replace('{HEIGHT}', '480')
+    image = ''
+    if 'image' in item and 'image' in item['image'] and item['image']['image'] is not None:
+        image = item['image']['image'].replace('{WIDTH}', '320').replace('{HEIGHT}', '480')
     if 'description' in item:
         description = item['description']
     else:
@@ -112,6 +114,8 @@ def get_seasons(id):
     post = {'payload' : {'contentId' : id}}
     seasons = []
     data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/page.content.display', data = post, session = session)
+    if 'err' in data or 'layout' not in data or 'blocks' not in data['layout']:
+        return seasons
     for block in data['layout']['blocks']:
         if block['schema'] == 'TabBlock' and block['template'] == 'tabs':
             for tab in block['tabs']:
@@ -121,6 +125,8 @@ def get_seasons(id):
                     else:
                         post = {"payload":{"tabId":tab['id']}}
                         data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/tab.display', data = post, session = session)
+    if 'layout' not in data or 'blocks' not in data['layout']:
+        return seasons
     for block in data['layout']['blocks']:
         if block['schema'] == 'CarouselBlock' and block['template'] in ['list','grid']:
             for carousel in block['carousels']:
@@ -271,7 +277,7 @@ def CarouselBlock(label, block, params, id):
             else:
                 Item(label = label + ' / ' + title, title = title, type = 'category_item', schema = block['schema'], call = None, params = params, tracking = carousel['tracking'], data = None)
         else:
-            if params['schema'] == 'PageContentDisplayApiAction' and 'criteria' in carousel and carousel['criteria'][0]['schema'] == 'CarouselGenericFilter':
+            if params['schema'] == 'PageContentDisplayApiAction' and 'criteria' in carousel and len(carousel['criteria']) > 0 and carousel['criteria'][0]['schema'] == 'CarouselGenericFilter':
                 carouselId = carousel['id']
                 for item in carousel['criteria'][0]['items']:
                     if 'additionalText' in item:
@@ -311,7 +317,8 @@ def CarouselBlock(label, block, params, id):
                             page = 2
                             carouselId = carousel['id']
                             image = os.path.join(icons_dir , 'next_arrow.png')
-                            Item(label = label, title = 'Následující strana (' + str(page) + '/' + str(pageCount) + ')', type = 'arrow', schema = carousel['criteria'][0]['schema'], call = 'carousel_display', params = {'payload' : {'carouselId' : carouselId, 'criteria' : block['carousels'][0]['paging']['criteria'], 'paging' : {'count' : count, 'position' : count * (page - 1) + 1}}}, tracking = None, data = {'image' : image})
+                            if 'criteria' in carousel and len(carousel['criteria']) > 0 and 'paging' in block['carousels'][0] and 'criteria' in block['carousels'][0]['paging']:
+                                Item(label = label, title = 'Následující strana (' + str(page) + '/' + str(pageCount) + ')', type = 'arrow', schema = carousel['criteria'][0]['schema'], call = 'carousel_display', params = {'payload' : {'carouselId' : carouselId, 'criteria' : block['carousels'][0]['paging']['criteria'], 'paging' : {'count' : count, 'position' : count * (page - 1) + 1}}}, tracking = None, data = {'image' : image})
 
 def TabBlock(label, block, params):
     for block in block['layout']['blocks']:
@@ -435,7 +442,7 @@ def carousel_display(label, params):
                         carouselId = data['carousel']['id']
                         addon = xbmcaddon.Addon()
                         icons_dir = os.path.join(addon.getAddonInfo('path'), 'resources','images')
-                        image = os.path.join(icons_dir , 'previous_arrow.png')
+                        image = os.path.join(icons_dir , 'next_arrow.png')
                         Item(label = label, title = 'Následující strana (' + str(page) + '/' + str(pageCount) + ')', type = 'arrow', schema = 'CarouselGenericFilter', call = 'carousel_display', params = {'payload' : {'carouselId' : carouselId, 'criteria' : data['carousel']['paging']['criteria'], 'paging' : {'count' : count, 'position' : count * (page - 1) + 1}}}, tracking = None, data = {'image' : image})                    
                         get_page = False
                 else:
@@ -451,7 +458,7 @@ def carousel_display(label, params):
 def content_play(params):
     params = json.loads(params)
     contentId = get_contentId(params)
-    if 'channel,' in contentId:
+    if 'channel.' in contentId:
         contentId = contentId.replace('channel.', '')
         mode = 'start'
     else:
@@ -464,7 +471,7 @@ def page_search_display(query):
     post = {"payload":{"query":query}}
     data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/page.search.display', data = post, session = session)  
     if 'err' not in data:
-        if 'blocks' in data['layout']:
+        if 'layout' in data and 'blocks' in data['layout']:
             for block in data['layout']['blocks']:
                 if block['schema'] == 'CarouselBlock':
                     CarouselBlock('', block, {'schema' : 'PageCategoryDisplayApiAction'}, None)

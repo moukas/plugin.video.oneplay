@@ -45,6 +45,10 @@ def remove_favourite(type, id):
     addon_userdata_dir = translatePath(addon.getAddonInfo('profile'))
     filename = os.path.join(addon_userdata_dir, 'favourites.txt')
     favourites = get_favourites()
+    if type not in favourites or id not in favourites[type]:
+        xbmcgui.Dialog().notification('Oneplay', 'Pořad není v oblíbených', xbmcgui.NOTIFICATION_INFO, 5000)
+        xbmc.executebuiltin('Container.Refresh')
+        return
     del favourites[type][id]
     try:
         with codecs.open(filename, 'w', encoding='utf-8') as file:

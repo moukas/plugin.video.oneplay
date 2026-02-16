@@ -31,7 +31,8 @@ class API:
         try:
             requestId = str(uuid.uuid4())
             clientId = str(uuid.uuid4())
-            ws = create_connection('wss://ws.cms.jyxo.cz/websocket/' + clientId)
+            ws = create_connection('wss://ws.cms.jyxo.cz/websocket/' + clientId, timeout = 20)
+            ws.settimeout(20)
             ws_data = ws.recv()
             ws_data = json.loads(ws_data)
             post = {"deviceInfo":{"deviceType":"web","appVersion":appVersion,"deviceManufacturer":"Unknown","deviceOs":"Linux"},"capabilities":{"async":"websockets"},"context":{"requestId":requestId,"clientId":clientId,"sessionId":ws_data['data']['serverId'],"serverId":ws_data['data']['serverId']}}

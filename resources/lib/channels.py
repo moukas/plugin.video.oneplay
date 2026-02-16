@@ -152,27 +152,6 @@ def add_channel_group(label):
     channels_groups.add_channels_group(group)    
     xbmc.executebuiltin('Container.Refresh')
 
-def edit_channel_group(group, label):
-    xbmcplugin.setPluginCategory(_handle, label)    
-    channels_groups = Channels_groups()
-    channels = Channels()
-    channels_list = channels.get_channels_list('name', visible_filter = False)
-    list_item = xbmcgui.ListItem(label='Přidat kanál')
-    url = get_url(action='edit_channel_group_list_channels', group = group, label = group + ' / Přidat kanál')  
-    xbmcplugin.addDirectoryItem(_handle, url, list_item, True)
-    list_item = xbmcgui.ListItem(label='Přidat všechny kanály')
-    url = get_url(action='edit_channel_group_add_all_channels', group = group, label = group + ' / Přidat kanál')  
-    xbmcplugin.addDirectoryItem(_handle, url, list_item, True)
-    if group in channels_groups.channels:
-        for channel in channels_groups.channels[group]:
-            if channel in channels_list:
-                list_item = xbmcgui.ListItem(label = channels_list[channel]['name'])
-                list_item.setArt({'thumb': channels_list[channel]['logo'], 'icon': channels_list[channel]['logo']})
-                url = get_url(action='edit_channel_group', group = group, label = label)  
-                list_item.addContextMenuItems([('Smazat kanál', 'RunPlugin(plugin://' + plugin_id + '?action=edit_channel_group_delete_channel&group=' + quote(group) + '&channel='  + quote(channel) + ')',)])       
-                xbmcplugin.addDirectoryItem(_handle, url, list_item, False)
-    xbmcplugin.endOfDirectory(_handle,cacheToDisc = False)
-
 def delete_channel_group(group):
     response = xbmcgui.Dialog().yesno('Smazání skupiny kanálů', 'Opravdu smazat skupinu kanálů ' + group + '?', nolabel = 'Ne', yeslabel = 'Ano')
     if response:
@@ -245,8 +224,15 @@ class Channels:
         self.favorites = 0
         self.load_channels()
 
-    def set_visibility(self, id, visibility):
+    def set_visibility(self, id, visibility, save = True):
         self.channels[id].update({'visible' : visibility})
+        if save == True:
+            self.save_channels()
+
+    def set_visibility_batch(self, visibility_map):
+        for id in visibility_map:
+            if id in self.channels:
+                self.channels[id].update({'visible' : visibility_map[id]})
         self.save_channels()
 
     def set_number(self, id, number):
@@ -424,6 +410,7 @@ class Channels:
         shutil.copyfile(channels, filename)
 
     def restore_channels(self, backup):
+        data = None
         if os.path.exists(backup):
             try:
                 with codecs.open(backup, 'r', encoding='utf-8') as file:
@@ -537,20 +524,22 @@ class Channels_groups:
 
     def select_group(self, group):
         channels = Channels()
+        channels_list = channels.get_channels_list(visible_filter = False)
+        visibility_map = {}
         if group == 'all':
             self.selected = None
-            channels_list = channels.get_channels_list(visible_filter = False)
             for channel in channels_list:
-                channels.set_visibility(channel, True)
+                visibility_map[channel] = True
         else:
             self.selected = group
             if group in self.channels and len(self.channels[group]):
-                channels_list = channels.get_channels_list(visible_filter = False)
                 for channel in channels_list:
                     if channels_list[channel]['name'] in self.channels[group]:
-                        channels.set_visibility(channel, True)
+                        visibility_map[channel] = True
                     else:
-                        channels.set_visibility(channel, False)
+                        visibility_map[channel] = False
+        if len(visibility_map) > 0:
+            channels.set_visibility_batch(visibility_map)
         self.save_channels_groups()      
 
     def load_channels_groups(self):

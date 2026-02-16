@@ -79,6 +79,8 @@ def router(paramstring):
     params = dict(parse_qsl(paramstring))
     check_settings() 
     if params:
+        if 'action' not in params:
+            raise ValueError('Neznámý parametr: {0}!'.format(paramstring))
         if params['action'] == 'list_live':
             list_live(params['label'])
 

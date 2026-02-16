@@ -49,6 +49,9 @@ class Session:
                     accounts_ext.update({account_name : account['accountId']})
                     accounts_data.append(account_name)
             account = get_account_id(accounts_data)
+            if account is None:
+                xbmcgui.Dialog().notification('Oneplay','Nebyl nalezen žádný účet', xbmcgui.NOTIFICATION_ERROR, 5000)
+                sys.exit()
             if '|' in account:
                 accounts = accounts_ext
             post = {"payload":{"command":{"schema":"LoginWithAccountCommand","accountId":accounts[account],"authCode":authToken}}}
@@ -71,6 +74,9 @@ class Session:
                 data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.device.remove', data = post, session = self)
         self.save_session()
         profileId = get_profile_id()
+        if profileId is None:
+            xbmcgui.Dialog().notification('Oneplay', 'Nebyl nalezen žádný profil', xbmcgui.NOTIFICATION_ERROR, 5000)
+            sys.exit()
         if len(str(addon.getSetting('profile_pin'))) > 0:
             post = {"payload":{"profileId":profileId},"authorization":[{"schema":"PinRequestAuthorization","pin":str(addon.getSetting('profile_pin')),"type":"profile"}]}
         else:
@@ -80,6 +86,9 @@ class Session:
             if 'err' in data and data['err'] == 'Profil nenalezen':
                 reset_profiles()
             profileId = get_profile_id()
+            if profileId is None:
+                xbmcgui.Dialog().notification('Oneplay', 'Nebyl nalezen žádný profil', xbmcgui.NOTIFICATION_ERROR, 5000)
+                sys.exit()
             if len(str(addon.getSetting('profile_pin'))) > 0:
                 post = {"payload":{"profileId":profileId},"authorization":[{"schema":"PinRequestAuthorization","pin":str(addon.getSetting('profile_pin')),"type":"profile"}]}
             else:
@@ -97,6 +106,9 @@ class Session:
         addon = xbmcaddon.Addon()
         api = API()
         profileId = get_profile_id()
+        if profileId is None:
+            xbmcgui.Dialog().notification('Oneplay', 'Nebyl nalezen žádný profil', xbmcgui.NOTIFICATION_ERROR, 5000)
+            sys.exit()
         if len(str(addon.getSetting('profile_pin'))) > 0:
             post = {"payload":{"profileId":profileId},"authorization":[{"schema":"PinRequestAuthorization","pin":str(addon.getSetting('profile_pin')),"type":"profile"}]}
         else:
@@ -117,7 +129,11 @@ class Session:
         data = settings.load_json_data({'filename' : 'session.txt', 'description' : 'session'})
         self.services = None
         if data is not None:
-            data = json.loads(data)
+            try:
+                data = json.loads(data)
+            except ValueError:
+                self.create_session()
+                return
             if 'valid_to' in data and 'token' in data:
                 if int(data['valid_to']) < int(time.time()):
                     self.create_session()

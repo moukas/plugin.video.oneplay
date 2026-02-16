@@ -85,9 +85,7 @@ def delete_search(query):
     addon_userdata_dir = translatePath(addon.getAddonInfo('profile')) 
     filename = addon_userdata_dir + 'search_history.txt'
     history = load_search_history()
-    for item in history:
-        if item == query:
-            history.remove(item)
+    history = [item for item in history if item != query]
     try:
         with open(filename, 'w') as file:
             for item in history:

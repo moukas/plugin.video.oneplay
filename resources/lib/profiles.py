@@ -92,12 +92,16 @@ def get_profiles(active = False):
         for profile in profiles:
             if profile['active'] == True:
                 return profile
+        if len(profiles) > 0:
+            return profiles[0]
         return None
     else:
         return profiles
 
 def get_profile_id():
     profile = get_profiles(active = True)
+    if profile is None:
+        return None
     return profile['id']
 
 def reset_profiles(load_profiles = True):
@@ -184,12 +188,16 @@ def get_accounts(active = False, accounts_data = None):
         for account in accounts:
             if account['active'] == True:
                 return account
+        if len(accounts) > 0:
+            return accounts[0]
         return None
     else:
         return accounts
 
 def get_account_id(accounts_data = None):
     account = get_accounts(active = True, accounts_data = accounts_data)
+    if account is None:
+        return None
     return account['name']
 
 def reset_accounts():

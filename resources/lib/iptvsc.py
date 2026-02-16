@@ -26,6 +26,8 @@ def _xmltv_tz_offset():
 
 def save_file_test():
     addon = xbmcaddon.Addon()  
+    file = None
+    test_file = None
     try:
         content = ''
         output_dir = addon.getSetting('output_dir')      
@@ -41,10 +43,12 @@ def save_file_test():
             return 1  
         file.close()
         xbmcvfs.delete(test_file)
-        return 0
+        return 0 
     except Exception:
-        file.close()
-        xbmcvfs.delete(test_file)
+        if file is not None:
+            file.close()
+        if test_file is not None:
+            xbmcvfs.delete(test_file)
         return 0 
 
 def generate_playlist(output_file = ''):

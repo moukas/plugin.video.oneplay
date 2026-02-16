@@ -40,7 +40,7 @@ def get_manifest_redirect(url):
         manifest = response.geturl()
         keepalive = get_keepalive_url(manifest, response)
         return manifest, keepalive
-    except:
+    except Exception:
         return url, None
 
 def get_keepalive_url(manifest, response):
@@ -61,9 +61,11 @@ def get_keepalive_url(manifest, response):
                     keepalive = manifest.replace('manifest.mpd?bkm-query', uri)
     elif 'index.m3u8' in manifest:
         streams = str(response.read()).split('#EXT-X-STREAM-INF:BANDWIDTH=')
-        if len(streams) > 0:
-            uri = streams[1].split('\\n')[1]
-            keepalive = manifest.replace('index.m3u8?bkm-query', uri)
+        if len(streams) > 1:
+            split_stream = streams[1].split('\\n')
+            if len(split_stream) > 1:
+                uri = split_stream[1]
+                keepalive = manifest.replace('index.m3u8?bkm-query', uri)
     return keepalive
 
 def get_list_item(type, url, drm, next_url, next_drm):
@@ -181,7 +183,7 @@ def get_stream_url(post, mode, next = False, reload_profile = False):
                 md_ids.append(item['play']['params']['payload']['criteria']['contentId'])            
             response = xbmcgui.Dialog().select(heading = 'Multidimenze - výběr streamu', list = md_titles, preselect = 0)
             if response < 0:
-                return
+                return None, None, None, None
             id = md_ids[response]
             if mode == 'archive':
                 post = {"payload":{"criteria":{"schema":"MDPlaybackCriteria","contentId":id,"position":0}},"playbackCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","subtitle":{"formats":["vtt"],"locations":["InstreamTrackLocation","ExternalTrackLocation"]},"liveSpecificCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","multipleAudio":False}}}

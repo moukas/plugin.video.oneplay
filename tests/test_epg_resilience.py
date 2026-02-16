@@ -1,4 +1,5 @@
 import importlib
+import json
 import re
 import sys
 import time
@@ -14,6 +15,7 @@ def install_kodi_stubs(settings=None):
     xbmc.log = lambda *args, **kwargs: None
     xbmc.getInfoLabel = lambda *_: "20.0"
     xbmc.Actor = lambda name: name
+    xbmc.executebuiltin = lambda *args, **kwargs: None
 
     xbmcgui = types.ModuleType("xbmcgui")
 
@@ -23,6 +25,15 @@ def install_kodi_stubs(settings=None):
 
         def textviewer(self, *args, **kwargs):
             return None
+
+        def select(self, *args, **kwargs):
+            return -1
+
+        def yesno(self, *args, **kwargs):
+            return False
+
+        def numeric(self, *args, **kwargs):
+            return ""
 
     class _DialogProgressBG:
         def create(self, *args, **kwargs):
@@ -57,6 +68,11 @@ def install_kodi_stubs(settings=None):
     xbmcvfs.delete = lambda *args, **kwargs: True
     xbmcvfs.File = None
     xbmcplugin = types.ModuleType("xbmcplugin")
+    xbmcplugin.setResolvedUrl = lambda *args, **kwargs: None
+    xbmcplugin.addDirectoryItem = lambda *args, **kwargs: None
+    xbmcplugin.endOfDirectory = lambda *args, **kwargs: None
+    xbmcplugin.setPluginCategory = lambda *args, **kwargs: None
+    xbmcplugin.setContent = lambda *args, **kwargs: None
 
     websocket = types.ModuleType("websocket")
     websocket.create_connection = lambda *_args, **_kwargs: None
@@ -212,6 +228,19 @@ class TestEpgResilience(unittest.TestCase):
         response = api.call_api("https://example.test", {"payload": {}}, session=None)
         self.assertEqual(response.get("err"), "api_exception")
 
+    def test_api_create_connection_uses_timeout(self):
+        api_module = importlib.reload(importlib.import_module("resources.lib.api"))
+        captured = {}
+
+        def _fake_create_connection(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            raise RuntimeError("stop")
+
+        api_module.create_connection = _fake_create_connection
+        api = api_module.API()
+        api.call_api("https://example.test", {"payload": {}}, session=None)
+        self.assertEqual(captured["kwargs"].get("timeout"), 20)
+
     def test_generate_epg_escapes_icon_src_and_has_xmltv_offset(self):
         written = {}
         iptvsc = importlib.reload(importlib.import_module("resources.lib.iptvsc"))
@@ -269,6 +298,163 @@ class TestEpgResilience(unittest.TestCase):
         self.assertIn("http://logo/img?a=1&amp;b=2", xml)
         self.assertIn("http://poster/p.png?a=1&amp;b=2", xml)
         self.assertRegex(xml, r'start="\d{14} [+-]\d{4}"')
+
+    def test_get_stream_url_returns_tuple_when_mosaic_cancelled(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+
+        class _FakeApi:
+            def call_api(self, url, data, session=None):
+                return {
+                    "playerControl": {
+                        "liveControl": {
+                            "timeline": {"timeShift": {"available": True}},
+                            "mosaic": {
+                                "items": [
+                                    {
+                                        "title": "Cam 1",
+                                        "play": {
+                                            "params": {
+                                                "payload": {
+                                                    "criteria": {"contentId": "cid.1"}
+                                                }
+                                            }
+                                        },
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                }
+
+        stream.API = _FakeApi
+        stream.Session = lambda: object()
+        result = stream.get_stream_url({"payload": {"criteria": {}}}, mode="start")
+        self.assertEqual(result, (None, None, None, None))
+
+    def test_content_play_detects_channel_dot_as_live(self):
+        categories = importlib.reload(importlib.import_module("resources.lib.categories"))
+        called = {}
+        categories.play_stream = lambda content_id, mode: called.update(
+            {"content_id": content_id, "mode": mode}
+        )
+        categories.content_play(
+            json.dumps(
+                {
+                    "payload": {
+                        "criteria": {"contentId": "channel.ct1"},
+                    }
+                }
+            )
+        )
+        self.assertEqual(called["content_id"], "ct1")
+        self.assertEqual(called["mode"], "start")
+
+    def test_channels_group_select_uses_single_batch_update(self):
+        channels_module = importlib.reload(importlib.import_module("resources.lib.channels"))
+        called = {"count": 0, "map": None}
+
+        class _FakeChannels:
+            def get_channels_list(self, bykey=None, visible_filter=True):
+                return {
+                    "id1": {"name": "A", "visible": True},
+                    "id2": {"name": "B", "visible": True},
+                }
+
+            def set_visibility_batch(self, visibility_map):
+                called["count"] += 1
+                called["map"] = visibility_map
+
+        channels_module.Channels = _FakeChannels
+        groups = channels_module.Channels_groups.__new__(channels_module.Channels_groups)
+        groups.groups = ["grp"]
+        groups.channels = {"grp": ["A"]}
+        groups.selected = None
+        groups.save_channels_groups = lambda: None
+        groups.select_group("grp")
+        self.assertEqual(called["count"], 1)
+        self.assertEqual(called["map"], {"id1": True, "id2": False})
+
+    def test_remove_favourite_missing_item_does_not_crash(self):
+        favourites = importlib.reload(importlib.import_module("resources.lib.favourites"))
+        favourites.get_favourites = lambda: {"item": {"x": {"title": "X", "image": ""}}}
+        favourites.remove_favourite("item", "missing")
+
+    def test_delete_search_removes_all_duplicates(self):
+        search = importlib.reload(importlib.import_module("resources.lib.search"))
+        search.load_search_history = lambda: ["abc", "x", "abc", "y"]
+        captured = {"data": ""}
+
+        class _FakeFile:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def write(self, data):
+                captured["data"] += data
+
+        search.open = lambda *args, **kwargs: _FakeFile()
+        search.delete_search("abc")
+        self.assertEqual(captured["data"], "x\ny\n")
+
+    def test_get_keepalive_url_hls_malformed_does_not_raise(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+
+        class _Resp:
+            def read(self):
+                return b"#EXTM3U"
+
+        keepalive = stream.get_keepalive_url(
+            "https://x/index.m3u8?bkm-query=1", _Resp()
+        )
+        self.assertIsNone(keepalive)
+
+    def test_get_profile_id_handles_missing_active_profile(self):
+        profiles = importlib.reload(importlib.import_module("resources.lib.profiles"))
+        profiles.get_profiles = lambda active=False, accounts_data=None: None
+        self.assertIsNone(profiles.get_profile_id())
+
+    def test_get_account_id_handles_missing_active_account(self):
+        profiles = importlib.reload(importlib.import_module("resources.lib.profiles"))
+        profiles.get_accounts = lambda active=False, accounts_data=None: None
+        self.assertIsNone(profiles.get_account_id())
+
+    def test_router_requires_action_param(self):
+        main = importlib.reload(importlib.import_module("main"))
+        main.check_settings = lambda: None
+        with self.assertRaises(ValueError):
+            main.router("foo=bar")
+
+    def test_save_file_test_handles_open_exception(self):
+        iptvsc = importlib.reload(importlib.import_module("resources.lib.iptvsc"))
+        iptvsc.xbmcvfs.File = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("cannot open")
+        )
+        self.assertEqual(iptvsc.save_file_test(), 0)
+
+    def test_session_load_session_recovers_from_invalid_json(self):
+        session_module = importlib.reload(importlib.import_module("resources.lib.session"))
+        settings_module = importlib.reload(importlib.import_module("resources.lib.settings"))
+
+        class _FakeSettings:
+            def __init__(self):
+                pass
+
+            def load_json_data(self, _file):
+                return "{bad-json"
+
+        settings_module.Settings = _FakeSettings
+        called = {"created": False}
+
+        def _fake_create_session(self):
+            called["created"] = True
+            self.token = "newtoken"
+
+        session_module.Session.create_session = _fake_create_session
+        session = session_module.Session()
+        self.assertTrue(called["created"])
+        self.assertEqual(session.token, "newtoken")
 
 
 if __name__ == "__main__":

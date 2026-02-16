@@ -67,8 +67,6 @@ class Settings:
                         data = row[:-1]
             except IOError:
                 pass
-            except IOError:
-                xbmcgui.Dialog().notification('Oneplay', 'Chyba při načtení ' + file['description'], xbmcgui.NOTIFICATION_ERROR, 5000)
         return data    
 
     def reset_json_data(self, file):
@@ -80,5 +78,3 @@ class Settings:
                 os.remove(filename)
             except IOError:
                 pass
-            except IOError:
-                xbmcgui.Dialog().notification('Oneplay', 'Chyba při resetu ' + file['description'], xbmcgui.NOTIFICATION_ERROR, 5000)
