@@ -8,8 +8,10 @@ import xbmcaddon
 from datetime import datetime
 import time
 import ssl
+import socket
 from xml.dom import minidom
 from urllib.request import urlopen, Request
+from urllib.error import URLError
 
 from resources.lib.session import Session
 from resources.lib.api import API
@@ -67,6 +69,22 @@ def get_keepalive_url(manifest, response):
                 uri = split_stream[1]
                 keepalive = manifest.replace('index.m3u8?bkm-query', uri)
     return keepalive
+
+def send_keepalive_request(keepalive, addon):
+    try:
+        request = Request(url = keepalive , data = None)
+        if addon.getSetting('log_request_url') == 'true':
+            xbmc.log('Oneplay > ' + str(keepalive))
+        response = urlopen(request, timeout = 10)
+        if addon.getSetting('log_response') == 'true':
+            xbmc.log('Oneplay > ' + str(response.status))
+        return True
+    except (URLError, socket.timeout, TimeoutError, ssl.SSLError, OSError) as error:
+        xbmc.log('Oneplay > Keepalive chyba: ' + str(error))
+        return False
+    except Exception as error:
+        xbmc.log('Oneplay > Keepalive neocekavana chyba: ' + str(error))
+        return False
 
 def get_list_item(type, url, drm, next_url, next_drm):
     from urllib.parse import urlencode
@@ -263,12 +281,14 @@ def play_stream(id, mode):
     else:
         xbmcgui.Dialog().notification('Oneplay','Pořad nelze přehrát', xbmcgui.NOTIFICATION_ERROR, 3000)
     if keepalive is not None:
+        keepalive_failures = 0
         time.sleep(3)
         while(xbmc.Player().isPlaying()):
-            request = Request(url = keepalive , data = None)
-            if addon.getSetting('log_request_url') == 'true':
-                xbmc.log('Oneplay > ' + str(keepalive))
-            response = urlopen(request)
-            if addon.getSetting('log_response') == 'true':
-                xbmc.log('Oneplay > ' + str(response.status))
+            if send_keepalive_request(keepalive, addon):
+                keepalive_failures = 0
+            else:
+                keepalive_failures += 1
+                if keepalive_failures >= 3:
+                    xbmc.log('Oneplay > Keepalive vypnut po 3 neúspěšných pokusech')
+                    break
             time.sleep(20)        

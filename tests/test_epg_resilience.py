@@ -5,6 +5,7 @@ import sys
 import time
 import types
 import unittest
+from urllib.error import URLError
 
 
 def install_kodi_stubs(settings=None):
@@ -409,6 +410,41 @@ class TestEpgResilience(unittest.TestCase):
             "https://x/index.m3u8?bkm-query=1", _Resp()
         )
         self.assertIsNone(keepalive)
+
+    def test_send_keepalive_request_handles_urlerror(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+
+        class _Addon:
+            def getSetting(self, _key):
+                return "false"
+
+        stream.urlopen = lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(URLError("handshake timeout"))
+        )
+        self.assertFalse(
+            stream.send_keepalive_request("https://x.example/keepalive", _Addon())
+        )
+
+    def test_send_keepalive_request_uses_timeout(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+        captured = {}
+
+        class _Addon:
+            def getSetting(self, _key):
+                return "false"
+
+        class _Resp:
+            status = 200
+
+        def _fake_urlopen(*_args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+            return _Resp()
+
+        stream.urlopen = _fake_urlopen
+        self.assertTrue(
+            stream.send_keepalive_request("https://x.example/keepalive", _Addon())
+        )
+        self.assertEqual(captured.get("timeout"), 10)
 
     def test_get_profile_id_handles_missing_active_profile(self):
         profiles = importlib.reload(importlib.import_module("resources.lib.profiles"))
