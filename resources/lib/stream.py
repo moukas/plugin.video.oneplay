@@ -21,28 +21,40 @@ from resources.lib.epg import get_channel_epg
 if len(sys.argv) > 1:
     _handle = int(sys.argv[1])
 
+HTTP_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0',
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    'Accept': '*/*',
+}
+MANIFEST_TIMEOUT = 15
+KEEPALIVE_TIMEOUT = 10
+
 def play_catchup(id, start_ts, end_ts):
     start_ts = int(start_ts)
     end_ts = int(end_ts)    
     epg = get_channel_epg(channel_id = id, from_ts = start_ts - 7200, to_ts = end_ts + 60*60*12)
     if start_ts in epg:
         if epg[start_ts]['endts'] > int(time.mktime(datetime.now().timetuple()))-10:
-            play_stream(id, 'start')
+            play_stream(id, 'start', prefer_live_edge = False)
         else:
             play_stream(epg[start_ts]['id'], 'archive')
     else:
-        play_stream(id, 'start')
+        play_stream(id, 'start', prefer_live_edge = False)
+
+def _build_request(url):
+    return Request(url = url, data = None, headers = HTTP_HEADERS)
 
 def get_manifest_redirect(url):
     try:
-        context=ssl.create_default_context()
-        context.set_ciphers('DEFAULT')
-        request = Request(url = url , data = None)
-        response = urlopen(request)
+        response = urlopen(_build_request(url), timeout = MANIFEST_TIMEOUT)
         manifest = response.geturl()
         keepalive = get_keepalive_url(manifest, response)
         return manifest, keepalive
-    except Exception:
+    except (URLError, socket.timeout, TimeoutError, ssl.SSLError, OSError) as error:
+        xbmc.log('Oneplay > Manifest redirect chyba: ' + str(error))
+        return url, None
+    except Exception as error:
+        xbmc.log('Oneplay > Manifest redirect neocekavana chyba: ' + str(error))
         return url, None
 
 def get_keepalive_url(manifest, response):
@@ -55,16 +67,19 @@ def get_keepalive_url(manifest, response):
                 minBandwidth = adaptationSet.getAttribute('minBandwidth')
                 segmentTemplates = adaptationSet.getElementsByTagName('SegmentTemplate')
                 for segmentTemplate in segmentTemplates:
+                    ts = None
                     timelines = segmentTemplate.getElementsByTagName('S')
                     for timeline in timelines:
                         if len(timeline.getAttribute('t')) > 0:
                             ts = timeline.getAttribute('t')
+                    if ts is None or len(minBandwidth) == 0:
+                        continue
                     uri = 'dash/' + segmentTemplate.getAttribute('media').replace('&amp;', '&').replace('$RepresentationID$', 'video=' + minBandwidth).replace('$Time$', ts)
                     keepalive = manifest.replace('manifest.mpd?bkm-query', uri)
     elif 'index.m3u8' in manifest:
-        streams = str(response.read()).split('#EXT-X-STREAM-INF:BANDWIDTH=')
+        streams = response.read().decode('utf-8', 'ignore').split('#EXT-X-STREAM-INF:BANDWIDTH=')
         if len(streams) > 1:
-            split_stream = streams[1].split('\\n')
+            split_stream = streams[1].splitlines()
             if len(split_stream) > 1:
                 uri = split_stream[1]
                 keepalive = manifest.replace('index.m3u8?bkm-query', uri)
@@ -72,10 +87,10 @@ def get_keepalive_url(manifest, response):
 
 def send_keepalive_request(keepalive, addon):
     try:
-        request = Request(url = keepalive , data = None)
+        request = _build_request(keepalive)
         if addon.getSetting('log_request_url') == 'true':
             xbmc.log('Oneplay > ' + str(keepalive))
-        response = urlopen(request, timeout = 10)
+        response = urlopen(request, timeout = KEEPALIVE_TIMEOUT)
         if addon.getSetting('log_response') == 'true':
             xbmc.log('Oneplay > ' + str(response.status))
         return True
@@ -88,13 +103,12 @@ def send_keepalive_request(keepalive, addon):
 
 def get_list_item(type, url, drm, next_url, next_drm):
     from urllib.parse import urlencode
-    headers = {'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0', 'Accept-Encoding' : 'gzip, deflate, br, zstd', 'Accept' : '*/*'}
     addon = xbmcaddon.Addon()
     list_item = xbmcgui.ListItem(path = url)
     list_item.setProperty('inputstream', 'inputstream.adaptive')
     list_item.setProperty('inputstream.adaptive.manifest_type', type)
-    list_item.setProperty('inputstream.adaptive.stream_headers', urlencode(headers))
-    list_item.setProperty('inputstream.adaptive.manifest_headers', urlencode(headers))
+    list_item.setProperty('inputstream.adaptive.stream_headers', urlencode(HTTP_HEADERS))
+    list_item.setProperty('inputstream.adaptive.manifest_headers', urlencode(HTTP_HEADERS))
     if drm is not None:
         from inputstreamhelper import Helper # type: ignore
         is_helper = Helper('mpd', drm = 'com.widevine.alpha')
@@ -108,15 +122,14 @@ def get_list_item(type, url, drm, next_url, next_drm):
         next_list_item = xbmcgui.ListItem(path = next_url)
         next_list_item.setProperty('inputstream', 'inputstream.adaptive')
         next_list_item.setProperty('inputstream.adaptive.manifest_type', type)
-        next_list_item.setProperty('inputstream.adaptive.stream_headers', urlencode(headers))
-        next_list_item.setProperty('inputstream.adaptive.manifest_headers', urlencode(headers))
+        next_list_item.setProperty('inputstream.adaptive.stream_headers', urlencode(HTTP_HEADERS))
+        next_list_item.setProperty('inputstream.adaptive.manifest_headers', urlencode(HTTP_HEADERS))
         if next_drm is not None:
             from inputstreamhelper import Helper # type: ignore
             is_helper = Helper('mpd', drm = 'com.widevine.alpha')
             if addon.getSetting('inputstream_helper') == 'false' or is_helper.check_inputstream():            
-                list_item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
-                from urllib.parse import urlencode
-                list_item.setProperty('inputstream.adaptive.license_key', drm['licenceUrl'] + '|' + urlencode({'x-axdrm-message' : drm['token']}) + '|R{SSM}|')                
+                next_list_item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
+                next_list_item.setProperty('inputstream.adaptive.license_key', next_drm['licenceUrl'] + '|' + urlencode({'x-axdrm-message' : next_drm['token']}) + '|R{SSM}|')                
         if type == 'mpd':
             next_list_item.setMimeType('application/dash+xml')
         next_list_item.setContentLookup(False)       
@@ -226,7 +239,7 @@ def get_stream_url(post, mode, next = False, reload_profile = False):
                     url_hls = asset['src']
     return url_hls, url_dash, url_dash_drm, drm
 
-def play_stream(id, mode):
+def play_stream(id, mode, prefer_live_edge = False):
     addon = xbmcaddon.Addon()
     api = API()
     session = Session()
@@ -250,7 +263,8 @@ def play_stream(id, mode):
                 pin = str(addon.getSetting('pin'))
             post = {"authorization":[{"schema":"PinRequestAuthorization","pin":pin,"type":"parental"}],"payload":{"criteria":{"schema":"ContentCriteria","contentId":"channel." + id},"startMode":"live"},"playbackCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","subtitle":{"formats":["vtt"],"locations":["InstreamTrackLocation","ExternalTrackLocation"]},"liveSpecificCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","multipleAudio":False}}}
         else:
-            post = {"payload":{"criteria":{"schema":"ContentCriteria","contentId":"channel." + id},"startMode":mode},"playbackCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","subtitle":{"formats":["vtt"],"locations":["InstreamTrackLocation","ExternalTrackLocation"]},"liveSpecificCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","multipleAudio":False}}}
+            start_mode = 'live' if prefer_live_edge else mode
+            post = {"payload":{"criteria":{"schema":"ContentCriteria","contentId":"channel." + id},"startMode":start_mode},"playbackCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","subtitle":{"formats":["vtt"],"locations":["InstreamTrackLocation","ExternalTrackLocation"]},"liveSpecificCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","multipleAudio":False}}}
     else:
         post = {"payload":{"contentId":id}}
         data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/page.content.display', data = post, session = session)
