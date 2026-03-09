@@ -29,49 +29,76 @@ class Session:
     def get_token(self):
         addon = xbmcaddon.Addon()
         api = API()
+        def _notify_login_error(default_msg = 'Problém při přihlášení', payload = None):
+            message = default_msg
+            if isinstance(payload, dict) and 'err' in payload and payload['err']:
+                message = str(payload['err'])
+            xbmcgui.Dialog().notification('Oneplay', message, xbmcgui.NOTIFICATION_ERROR, 5000)
+
         post = {"payload":{"command":{"schema":"LoginWithCredentialsCommand","email":addon.getSetting('username'),"password":addon.getSetting('password')}}}
         data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.login.step', data = post, sensitive = True)
-        if 'err' in data or 'step' not in data or ('bearerToken' not in data['step'] and data['step']['schema'] != 'ShowAccountChooserStep'):
-            xbmcgui.Dialog().notification('Oneplay','Problém při přihlášení', xbmcgui.NOTIFICATION_ERROR, 5000)
+        step = data.get('step') if isinstance(data, dict) else None
+        if 'err' in data or not isinstance(step, dict):
+            _notify_login_error(payload = data)
             sys.exit()
-        if data['step']['schema'] == 'ShowAccountChooserStep':
+
+        if 'bearerToken' not in step:
+            schema = str(step.get('schema', ''))
+            if 'AccountChooser' not in schema:
+                _notify_login_error(payload = data)
+                sys.exit()
             accounts = {}
             accounts_ext = {}
             accounts_data = []
-            authToken = data['step']['authToken']
-            for account in data['step']['accounts']:
-                if 'extId' in account or ('isActive' in account and account['isActive'] == True):
-                    if 'extId' in account:
-                        account_name = account['name'] + '|' + account['extId']
-                    else:
-                        account_name = account['name'] + '|' + account['accountProvider']
-                    accounts.update({account['name'] : account['accountId']})
-                    accounts_ext.update({account_name : account['accountId']})
-                    accounts_data.append(account_name)
+            authToken = step.get('authToken') or step.get('authorizationToken')
+            if authToken is None:
+                _notify_login_error(payload = data)
+                sys.exit()
+            for account in step.get('accounts', []):
+                account_id = account.get('accountId')
+                if account_id is None:
+                    continue
+                account_name = str(account.get('name', account_id))
+                account_provider = str(account.get('extId') or account.get('accountProvider') or account_id)
+                account_ext_name = account_name + '|' + account_provider
+                if account_name not in accounts:
+                    accounts[account_name] = account_id
+                accounts_ext[account_ext_name] = account_id
+                accounts_data.append(account_ext_name)
+            if len(accounts_data) == 0:
+                _notify_login_error('Nebyl nalezen žádný účet')
+                sys.exit()
             account = get_account_id(accounts_data)
             if account is None:
                 xbmcgui.Dialog().notification('Oneplay','Nebyl nalezen žádný účet', xbmcgui.NOTIFICATION_ERROR, 5000)
                 sys.exit()
             if '|' in account:
                 accounts = accounts_ext
+            if account not in accounts:
+                _notify_login_error(payload = data)
+                sys.exit()
             post = {"payload":{"command":{"schema":"LoginWithAccountCommand","accountId":accounts[account],"authCode":authToken}}}
-            data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.login.step', data = post)   
-            if 'err' in data or 'step' not in data or 'bearerToken' not in data['step']:
-                xbmcgui.Dialog().notification('Oneplay','Problém při přihlášení', xbmcgui.NOTIFICATION_ERROR, 5000)
+            data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.login.step', data = post, sensitive = True)
+            step = data.get('step') if isinstance(data, dict) else None
+            if 'err' in data or not isinstance(step, dict) or 'bearerToken' not in step:
+                _notify_login_error(payload = data)
                 sys.exit()            
-        self.token = data['step']['bearerToken']
-        deviceId = data['step']['currentUser']['currentDevice']['id']
-        post = {"payload":{"id":deviceId,"name":addon.getSetting('deviceid')}}
-        data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.device.change', data = post, session = self)
-        post = {"payload":{"screen":"devices"}}
-        data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/setting.display', data = post, session = self)
-        if 'err' in data or 'screen' not in data or 'userDevices' not in data['screen']:
-            xbmcgui.Dialog().notification('Oneplay','Problém při přihlášení', xbmcgui.NOTIFICATION_ERROR, 5000)
-            sys.exit()
-        for device in data['screen']['userDevices']['devices']:
-            if device['id'] != deviceId and device['name'] == addon.getSetting('deviceid'):
-                post = {"payload":{"criteria":{"schema":"UserDeviceIdCriteria","id":device['id']}}}
-                data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.device.remove', data = post, session = self)
+
+        self.token = step['bearerToken']
+
+        deviceId = step.get('currentUser', {}).get('currentDevice', {}).get('id')
+        if deviceId is not None:
+            post = {"payload":{"id":deviceId,"name":addon.getSetting('deviceid')}}
+            data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.device.change', data = post, session = self)
+            if 'err' not in data:
+                post = {"payload":{"screen":"devices"}}
+                data = api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/setting.display', data = post, session = self)
+                if 'err' not in data and 'screen' in data and 'userDevices' in data['screen']:
+                    for device in data['screen']['userDevices']['devices']:
+                        if device.get('id') != deviceId and device.get('name') == addon.getSetting('deviceid'):
+                            post = {"payload":{"criteria":{"schema":"UserDeviceIdCriteria","id":device['id']}}}
+                            api.call_api(url = 'https://http.cms.jyxo.cz/api/v1.6/user.device.remove', data = post, session = self)
+
         self.save_session()
         profileId = get_profile_id()
         if profileId is None:

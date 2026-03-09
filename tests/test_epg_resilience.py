@@ -17,6 +17,9 @@ def install_kodi_stubs(settings=None):
     xbmc.getInfoLabel = lambda *_: "20.0"
     xbmc.Actor = lambda name: name
     xbmc.executebuiltin = lambda *args, **kwargs: None
+    xbmc.PLAYLIST_VIDEO = 1
+    xbmc.Player = lambda: types.SimpleNamespace(isPlaying=lambda: False)
+    xbmc.PlayList = lambda *_args, **_kwargs: types.SimpleNamespace(add=lambda *args, **kwargs: None)
 
     xbmcgui = types.ModuleType("xbmcgui")
 
@@ -242,6 +245,109 @@ class TestEpgResilience(unittest.TestCase):
         api.call_api("https://example.test", {"payload": {}}, session=None)
         self.assertEqual(captured["kwargs"].get("timeout"), 20)
 
+    def test_api_call_api_accepts_sync_ok_response(self):
+        api_module = importlib.reload(importlib.import_module("resources.lib.api"))
+
+        class _FakeWs:
+            def settimeout(self, _timeout):
+                return None
+
+            def recv(self):
+                return json.dumps({"data": {"serverId": "srv"}})
+
+            def close(self):
+                return None
+
+        class _FakeResponse:
+            def getheader(self, _name):
+                return None
+
+            def read(self):
+                return json.dumps({"result": {"status": "Ok"}, "data": {"sync": True}}).encode("utf-8")
+
+        api_module.create_connection = lambda *_args, **_kwargs: _FakeWs()
+        api_module.urlopen = lambda *_args, **_kwargs: _FakeResponse()
+        api = api_module.API()
+        data = api.call_api("https://example.test", {"payload": {}}, session=None)
+        self.assertEqual(data, {"sync": True})
+
+    def test_api_call_api_waits_for_matching_request_id(self):
+        api_module = importlib.reload(importlib.import_module("resources.lib.api"))
+        original_uuid4 = api_module.uuid.uuid4
+
+        class _UuidIter:
+            def __init__(self):
+                self._items = iter(["req-uuid", "client-uuid"])
+
+            def __call__(self):
+                return next(self._items)
+
+        class _FakeWs:
+            def __init__(self):
+                self.messages = [
+                    json.dumps({"data": {"serverId": "srv"}}),
+                    json.dumps({"response": {"context": {"requestId": "other"}, "result": {"status": "Ok"}, "data": {"bad": 1}}}),
+                    json.dumps({"response": {"context": {"requestId": "req-uuid"}, "result": {"status": "Ok"}, "data": {"ok": 1}}}),
+                ]
+
+            def settimeout(self, _timeout):
+                return None
+
+            def recv(self):
+                return self.messages.pop(0)
+
+            def close(self):
+                return None
+
+        class _FakeResponse:
+            def getheader(self, _name):
+                return None
+
+            def read(self):
+                return json.dumps({"result": {"status": "OkAsync"}}).encode("utf-8")
+
+        try:
+            api_module.uuid.uuid4 = _UuidIter()
+            api_module.create_connection = lambda *_args, **_kwargs: _FakeWs()
+            api_module.urlopen = lambda *_args, **_kwargs: _FakeResponse()
+            api = api_module.API()
+            data = api.call_api("https://example.test", {"payload": {}}, session=None)
+            self.assertEqual(data, {"ok": 1})
+        finally:
+            api_module.uuid.uuid4 = original_uuid4
+
+    def test_api_call_api_returns_timeout_when_ws_recv_fails(self):
+        api_module = importlib.reload(importlib.import_module("resources.lib.api"))
+
+        class _FakeWs:
+            def __init__(self):
+                self._step = 0
+
+            def settimeout(self, _timeout):
+                return None
+
+            def recv(self):
+                if self._step == 0:
+                    self._step += 1
+                    return json.dumps({"data": {"serverId": "srv"}})
+                raise RuntimeError("ws timeout")
+
+            def close(self):
+                return None
+
+        class _FakeResponse:
+            def getheader(self, _name):
+                return None
+
+            def read(self):
+                return json.dumps({"result": {"status": "OkAsync"}}).encode("utf-8")
+
+        api_module.create_connection = lambda *_args, **_kwargs: _FakeWs()
+        api_module.urlopen = lambda *_args, **_kwargs: _FakeResponse()
+        api = api_module.API()
+        data = api.call_api("https://example.test", {"payload": {}}, session=None)
+        self.assertEqual(data.get("err"), "timeout")
+
     def test_generate_epg_escapes_icon_src_and_has_xmltv_offset(self):
         written = {}
         iptvsc = importlib.reload(importlib.import_module("resources.lib.iptvsc"))
@@ -446,6 +552,50 @@ class TestEpgResilience(unittest.TestCase):
         )
         self.assertEqual(captured.get("timeout"), 10)
 
+    def test_get_manifest_redirect_uses_timeout_and_headers(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+        captured = {}
+
+        class _Resp:
+            def geturl(self):
+                return "https://cdn.example/manifest.mpd?bkm-query=1"
+
+            def read(self):
+                return b"<MPD/>"
+
+        def _fake_urlopen(request, timeout=None):
+            captured["timeout"] = timeout
+            captured["headers"] = dict(request.header_items())
+            return _Resp()
+
+        stream.urlopen = _fake_urlopen
+        stream.get_keepalive_url = lambda manifest, response: None
+        manifest, keepalive = stream.get_manifest_redirect("https://origin.example/manifest.mpd")
+        self.assertEqual(manifest, "https://cdn.example/manifest.mpd?bkm-query=1")
+        self.assertIsNone(keepalive)
+        self.assertEqual(captured.get("timeout"), 15)
+        self.assertIn("User-agent", captured["headers"])
+
+    def test_play_stream_can_force_live_edge_for_iptv(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+        captured = {}
+
+        class _FakeChannels:
+            def get_channels_list(self, key):
+                self._key = key
+                return {"ct1": {"adult": False}}
+
+        def _fake_get_stream_url(post, mode, next=False, reload_profile=False):
+            captured["startMode"] = post["payload"]["startMode"]
+            return (None, None, None, None)
+
+        stream.Channels = _FakeChannels
+        stream.API = lambda: object()
+        stream.Session = lambda: object()
+        stream.get_stream_url = _fake_get_stream_url
+        stream.play_stream("ct1", "start", prefer_live_edge=True)
+        self.assertEqual(captured["startMode"], "live")
+
     def test_get_profile_id_handles_missing_active_profile(self):
         profiles = importlib.reload(importlib.import_module("resources.lib.profiles"))
         profiles.get_profiles = lambda active=False, accounts_data=None: None
@@ -491,6 +641,27 @@ class TestEpgResilience(unittest.TestCase):
         session = session_module.Session()
         self.assertTrue(called["created"])
         self.assertEqual(session.token, "newtoken")
+
+    def test_session_get_token_handles_missing_current_device(self):
+        session_module = importlib.reload(importlib.import_module("resources.lib.session"))
+        session_module.Session.load_session = lambda self: None
+        session_module.Session.save_session = lambda self: None
+        session_module.get_profile_id = lambda: "p1"
+        session_module.reset_profiles = lambda: None
+        session_module.sys.exit = lambda: (_ for _ in ()).throw(AssertionError("sys.exit called"))
+
+        class _FakeApi:
+            def call_api(self, url, data, session=None, sensitive=False):
+                if url.endswith("user.login.step"):
+                    return {"step": {"bearerToken": "token1"}}
+                if url.endswith("user.profile.select"):
+                    return {"bearerToken": "token2"}
+                return {}
+
+        session_module.API = _FakeApi
+        session = session_module.Session()
+        session.get_token()
+        self.assertEqual(session.token, "token2")
 
 
 if __name__ == "__main__":

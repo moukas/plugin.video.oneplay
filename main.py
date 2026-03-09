@@ -227,7 +227,8 @@ def router(paramstring):
             if 'catchup_start_ts' in params and 'catchup_end_ts' in params:
                 play_catchup(id = params['id'], start_ts = params['catchup_start_ts'], end_ts = params['catchup_end_ts'])
             else:
-                play_stream(params['id'], 'start')
+                addon = xbmcaddon.Addon()
+                play_stream(params['id'], 'start', prefer_live_edge = addon.getSetting('iptv_live_edge') == 'true')
         elif params['action'] == 'iptv_sc_rec':
             iptv_sc_rec(params['channel'], params['startdatetime'])
 
