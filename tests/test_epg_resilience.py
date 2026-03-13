@@ -596,6 +596,65 @@ class TestEpgResilience(unittest.TestCase):
         stream.play_stream("ct1", "start", prefer_live_edge=True)
         self.assertEqual(captured["startMode"], "live")
 
+    def test_monitor_playback_retries_stream_only_once_after_manifest_failures(self):
+        stream = importlib.reload(importlib.import_module("resources.lib.stream"))
+        calls = {"restart": 0, "stop": 0, "play": 0}
+        states = iter([True, True, True, False])
+
+        class _FakePlayer:
+            def isPlaying(self):
+                return next(states, False)
+
+            def stop(self):
+                calls["stop"] += 1
+
+            def play(self, _url, _list_item):
+                calls["play"] += 1
+
+        class _Addon:
+            def getSetting(self, _key):
+                return "false"
+
+        stream.time.sleep = lambda *_args, **_kwargs: None
+        stream.send_keepalive_request = lambda *_args, **_kwargs: True
+        probe_results = iter([False, False, False, False])
+        stream.probe_manifest = lambda *_args, **_kwargs: next(probe_results, False)
+
+        def _fake_restart(addon, player, post, mode):
+            calls["restart"] += 1
+            player.stop()
+            player.play("https://retry.example/manifest.mpd", object())
+            return {
+                "type": "mpd",
+                "source_url": "https://retry.example/source.mpd",
+                "url": "https://retry.example/manifest.mpd",
+                "drm": None,
+                "next_url": None,
+                "next_drm": None,
+                "keepalive": "https://retry.example/keepalive",
+            }
+
+        stream.restart_playback = _fake_restart
+        stream.monitor_playback(
+            {
+                "type": "mpd",
+                "source_url": "https://origin.example/source.mpd",
+                "url": "https://origin.example/manifest.mpd",
+                "drm": None,
+                "next_url": None,
+                "next_drm": None,
+                "keepalive": "https://origin.example/keepalive",
+            },
+            _Addon(),
+            _FakePlayer(),
+            {"payload": {"criteria": {"contentId": "channel.ct1"}}},
+            "start",
+        )
+
+        self.assertEqual(calls["restart"], 1)
+        self.assertEqual(calls["stop"], 1)
+        self.assertEqual(calls["play"], 1)
+
     def test_get_profile_id_handles_missing_active_profile(self):
         profiles = importlib.reload(importlib.import_module("resources.lib.profiles"))
         profiles.get_profiles = lambda active=False, accounts_data=None: None

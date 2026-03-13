@@ -28,6 +28,10 @@ HTTP_HEADERS = {
 }
 MANIFEST_TIMEOUT = 15
 KEEPALIVE_TIMEOUT = 10
+HEALTHCHECK_INTERVAL = 20
+MANIFEST_FAILURE_THRESHOLD = 2
+KEEPALIVE_FAILURE_THRESHOLD = 3
+MAX_PLAYBACK_RETRIES = 1
 
 def play_catchup(id, start_ts, end_ts):
     start_ts = int(start_ts)
@@ -101,7 +105,19 @@ def send_keepalive_request(keepalive, addon):
         xbmc.log('Oneplay > Keepalive neocekavana chyba: ' + str(error))
         return False
 
-def get_list_item(type, url, drm, next_url, next_drm):
+def probe_manifest(url):
+    try:
+        response = urlopen(_build_request(url), timeout = MANIFEST_TIMEOUT)
+        response.read(1)
+        return True
+    except (URLError, socket.timeout, TimeoutError, ssl.SSLError, OSError) as error:
+        xbmc.log('Oneplay > Manifest probe chyba: ' + str(error))
+        return False
+    except Exception as error:
+        xbmc.log('Oneplay > Manifest probe neocekavana chyba: ' + str(error))
+        return False
+
+def build_list_item(type, url, drm):
     from urllib.parse import urlencode
     addon = xbmcaddon.Addon()
     list_item = xbmcgui.ListItem(path = url)
@@ -112,13 +128,18 @@ def get_list_item(type, url, drm, next_url, next_drm):
     if drm is not None:
         from inputstreamhelper import Helper # type: ignore
         is_helper = Helper('mpd', drm = 'com.widevine.alpha')
-        if addon.getSetting('inputstream_helper') == 'false' or is_helper.check_inputstream():            
+        if addon.getSetting('inputstream_helper') == 'false' or is_helper.check_inputstream():
             list_item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
-            list_item.setProperty('inputstream.adaptive.license_key', drm['licenceUrl'] + '|' + urlencode({'x-axdrm-message' : drm['token']}) + '|R{SSM}|')                
+            list_item.setProperty('inputstream.adaptive.license_key', drm['licenceUrl'] + '|' + urlencode({'x-axdrm-message' : drm['token']}) + '|R{SSM}|')
     if type == 'mpd':
         list_item.setMimeType('application/dash+xml')
-    list_item.setContentLookup(False)       
+    list_item.setContentLookup(False)
+    return list_item
+
+def queue_next_item(type, next_url, next_drm):
     if next_url is not None:
+        from urllib.parse import urlencode
+        addon = xbmcaddon.Addon()
         next_list_item = xbmcgui.ListItem(path = next_url)
         next_list_item.setProperty('inputstream', 'inputstream.adaptive')
         next_list_item.setProperty('inputstream.adaptive.manifest_type', type)
@@ -127,15 +148,94 @@ def get_list_item(type, url, drm, next_url, next_drm):
         if next_drm is not None:
             from inputstreamhelper import Helper # type: ignore
             is_helper = Helper('mpd', drm = 'com.widevine.alpha')
-            if addon.getSetting('inputstream_helper') == 'false' or is_helper.check_inputstream():            
+            if addon.getSetting('inputstream_helper') == 'false' or is_helper.check_inputstream():
                 next_list_item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
-                next_list_item.setProperty('inputstream.adaptive.license_key', next_drm['licenceUrl'] + '|' + urlencode({'x-axdrm-message' : next_drm['token']}) + '|R{SSM}|')                
+                next_list_item.setProperty('inputstream.adaptive.license_key', next_drm['licenceUrl'] + '|' + urlencode({'x-axdrm-message' : next_drm['token']}) + '|R{SSM}|')
         if type == 'mpd':
             next_list_item.setMimeType('application/dash+xml')
-        next_list_item.setContentLookup(False)       
+        next_list_item.setContentLookup(False)
         playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
         playlist.add(next_url, next_list_item)
+
+def get_list_item(type, url, drm, next_url, next_drm):
+    list_item = build_list_item(type, url, drm)
+    queue_next_item(type, next_url, next_drm)
     xbmcplugin.setResolvedUrl(_handle, True, list_item)
+    return list_item
+
+def select_playback(addon, url_hls, url_dash, url_dash_drm, drm, next_url_hls, next_url_dash, next_url_dash_drm, next_drm):
+    if addon.getSetting('prefer_hls') == 'true' and url_hls is not None:
+        return {'type': 'hls', 'source_url': url_hls, 'drm': None, 'next_url': next_url_hls, 'next_drm': None}
+    if url_dash is not None:
+        return {'type': 'mpd', 'source_url': url_dash, 'drm': None, 'next_url': next_url_dash, 'next_drm': None}
+    if url_dash_drm is not None:
+        return {'type': 'mpd', 'source_url': url_dash_drm, 'drm': drm, 'next_url': next_url_dash_drm, 'next_drm': next_drm}
+    if url_hls is not None:
+        return {'type': 'hls', 'source_url': url_hls, 'drm': None, 'next_url': next_url_hls, 'next_drm': None}
+    return None
+
+def resolve_playback(addon, post, mode):
+    url_hls, url_dash, url_dash_drm, drm = get_stream_url(post, mode)
+    playback = select_playback(addon, url_hls, url_dash, url_dash_drm, drm, None, None, None, None)
+    if playback is None:
+        return None
+    playback['url'], playback['keepalive'] = get_manifest_redirect(playback['source_url'])
+    return playback
+
+def restart_playback(addon, player, post, mode):
+    refreshed = resolve_playback(addon, post, mode)
+    if refreshed is None:
+        xbmc.log('Oneplay > Obnoveni streamu selhalo, nova URL neni dostupna')
+        return None
+    xbmc.log('Oneplay > Obnovuji stream s novou URL')
+    xbmcgui.Dialog().notification('Oneplay', 'Obnovuji stream', xbmcgui.NOTIFICATION_INFO, 2500)
+    list_item = build_list_item(refreshed['type'], refreshed['url'], refreshed['drm'])
+    player.stop()
+    time.sleep(1)
+    player.play(refreshed['url'], list_item)
+    return refreshed
+
+def monitor_playback(playback, addon, player, post, mode):
+    if playback is None:
+        return
+    keepalive_failures = 0
+    manifest_failures = 0
+    retry_count = 0
+    time.sleep(3)
+    while(player.isPlaying()):
+        if playback['keepalive'] is not None:
+            if send_keepalive_request(playback['keepalive'], addon):
+                keepalive_failures = 0
+            else:
+                keepalive_failures += 1
+        else:
+            keepalive_failures = 0
+
+        if probe_manifest(playback['source_url']):
+            manifest_failures = 0
+        else:
+            manifest_failures += 1
+
+        should_retry = retry_count < MAX_PLAYBACK_RETRIES and (
+            keepalive_failures >= KEEPALIVE_FAILURE_THRESHOLD or
+            manifest_failures >= MANIFEST_FAILURE_THRESHOLD
+        )
+        if should_retry:
+            reason = 'keepalive' if keepalive_failures >= KEEPALIVE_FAILURE_THRESHOLD else 'manifest'
+            xbmc.log('Oneplay > Detekovan problem se streamem (%s), zkousim jeden reconnect' % reason)
+            refreshed = restart_playback(addon, player, post, mode)
+            retry_count += 1
+            if refreshed is not None:
+                playback = refreshed
+                keepalive_failures = 0
+                manifest_failures = 0
+                time.sleep(3)
+                continue
+
+        if keepalive_failures >= KEEPALIVE_FAILURE_THRESHOLD:
+            xbmc.log('Oneplay > Keepalive vypnut po %s neúspěšných pokusech' % KEEPALIVE_FAILURE_THRESHOLD)
+            break
+        time.sleep(HEALTHCHECK_INTERVAL)
 
 def get_stream_url(post, mode, next = False, reload_profile = False):
     api = API()
@@ -243,7 +343,6 @@ def play_stream(id, mode, prefer_live_edge = False):
     addon = xbmcaddon.Addon()
     api = API()
     session = Session()
-    keepalive = None
     next_url_dash = None
     next_url_dash_drm = None
     next_url_hls = None
@@ -279,30 +378,11 @@ def play_stream(id, mode, prefer_live_edge = False):
         post = {"payload":{"criteria":{"schema":"ContentCriteria","contentId":id}},"playbackCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","subtitle":{"formats":["vtt"],"locations":["InstreamTrackLocation","ExternalTrackLocation"]},"liveSpecificCapabilities":{"protocols":["dash","hls"],"drm":["widevine","fairplay"],"altTransfer":"Unicast","multipleAudio":False}}}
 
     url_hls, url_dash, url_dash_drm, drm = get_stream_url(post, mode)
+    playback = select_playback(addon, url_hls, url_dash, url_dash_drm, drm, next_url_hls, next_url_dash, next_url_dash_drm, next_drm)
 
-    if addon.getSetting('prefer_hls') == 'true' and url_hls is not None:
-        url, keepalive = get_manifest_redirect(url_hls)
-        get_list_item('hls', url, None, next_url_hls, None)
-    elif url_dash is not None:
-        url, keepalive = get_manifest_redirect(url_dash)
-        get_list_item('mpd', url, None, next_url_dash, None)
-    elif url_dash_drm is not None:
-        url, keepalive = get_manifest_redirect(url_dash_drm)
-        get_list_item('mpd', url, drm, next_url_dash_drm, next_drm)
-    elif url_hls is not None:
-        url, keepalive = get_manifest_redirect(url_hls)
-        get_list_item('hls', url, None, next_url_hls, None)
+    if playback is not None:
+        playback['url'], playback['keepalive'] = get_manifest_redirect(playback['source_url'])
+        get_list_item(playback['type'], playback['url'], playback['drm'], playback['next_url'], playback['next_drm'])
     else:
         xbmcgui.Dialog().notification('Oneplay','Pořad nelze přehrát', xbmcgui.NOTIFICATION_ERROR, 3000)
-    if keepalive is not None:
-        keepalive_failures = 0
-        time.sleep(3)
-        while(xbmc.Player().isPlaying()):
-            if send_keepalive_request(keepalive, addon):
-                keepalive_failures = 0
-            else:
-                keepalive_failures += 1
-                if keepalive_failures >= 3:
-                    xbmc.log('Oneplay > Keepalive vypnut po 3 neúspěšných pokusech')
-                    break
-            time.sleep(20)        
+    monitor_playback(playback, addon, xbmc.Player(), post, mode)
