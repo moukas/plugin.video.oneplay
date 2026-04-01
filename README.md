@@ -6,22 +6,22 @@ VOD, živé vysílání, archiv, nahrávky, vytváření playlistu a EPG pro IPT
 <a href="https://www.xbmc-kodi.cz/prispevek-oneplay">Vlákno na fóru XBMC-Kodi.cz</a><br><br>
 </p>
 <p>
-v1.8.4 (14.2.2026)<br>
-- oprava automatického spouštění generování EPG<br><br>
+v2.1.1 (31.3.2026)<br>
+- úprava struktury nastavení<br><br>
 
-v1.8.3 (25.1.2026)<br>
-- přidaná možnost použít Picons Server<br><br>
+v2.1.0 (31.3.2026)<br>
+- kešování EPG dat<br>
+- skrytí upsell/preview položek v kategoriích<br>
+- oprava víceřádkových názvů v oblíbených<br>
+- úprava struktury nastavení<br><br>
 
-v1.8.2 (18.1.2026)<br>
-- úprava výběru profilu<br>
-- změna filtrování upsell kanálů<br><br>
+v2.0.2 (28.3.2026)<br>
+- oprava plnění dat položek EPG v kategoriích<br><br>
 
-v1.8.1 (13.1.2026)<br>
-- ošetření výběru profilu při vrácení dialogu Kdo se dívá?<br>
-- ošetření přerávání v kategoriích u tarifů s limitem<br>
-- custom logování do souboru<br>
-- přidání popisu k nahrávkám/pořadům v kategoriích<br><br>
+v2.0.1 (28.3.2026)<br>
+- upravení "cesty" v kategoriích<br>
+- oprava spouštění pořadů v kategoriích s odkazem na EPG<br><br>
 
-v1.8.0 (21.12.2025)<br>
-- ošetření chyby v datech následujícího pořadu<br><br>
+v2.0.0 (28.3.2026)<br>
+- kompletně přepracovaný doplněk<br>
 </p>
