@@ -1,4 +1,4 @@
-<addon id="plugin.video.oneplay" name="Oneplay" provider-name="waladir" version="1.8.5">
+﻿<addon id="plugin.video.oneplay" name="Oneplay" provider-name="waladir" version="2.1.1">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="inputstream.adaptive" version="19.0.0"/>
@@ -38,30 +38,24 @@ Další informace a podporu najdete na fóru www.xbmc-kodi.cz (https://www.xbmc-
     <platform>all</platform>
     <source>https://github.com/waladir/plugin.video.oneplay</source>
     <news>
-v1.8.5 (9.3.2026)
-- oprava přihlášení při synchronní API odpovědi `status=Ok`
-- robustnější zpracování websocket timeoutů a párování `requestId`
-- stabilita živého přehrávání (hlavičky/timeouty manifestu, keepalive)
-- volba pro IPTV Simple: spouštět live TV přímo v live edge režimu
+v2.1.1 (31.3.2026)
+- úprava struktury nastavení
 
-v1.8.4 (14.2.2026)
-- oprava automatického spouštění generování EPG
+v2.1.0 (31.3.2026)
+- kešování EPG dat
+- skrytí upsell/preview položek v kategoriích
+- oprava víceřádkových názvů v oblíbených
+- úprava struktury nastavení
 
-v1.8.3 (25.1.2026)
-- přidaná možnost použít Picons Server
+v2.0.2 (28.3.2026)
+- oprava plnění dat položek EPG v kategoriích
 
-v1.8.2 (18.1.2026)
-- úprava výběru profilu
-- změna filtrování upsell kanálů
+v2.0.1 (28.3.2026)
+- upravení "cesty" v kategoriích
+- oprava spouštění pořadů v kategoriích s odkazem na EPG
 
-v1.8.1 (13.1.2026)
-- ošetření výběru profilu při vrácení dialogu Kdo se dívá?
-- ošetření přerávání v kategoriích u tarifů s limitem
-- custom logování do souboru
-- přidání popisu k nahrávkám/pořadům v kategoriích
-
-v1.8.0 (21.12.2025)
-- ošetření chyby v datech následujícího pořadu
+v2.0.0 (28.3.2026)
+- kompletně přepracovaný doplněk
     </news>
     <assets>
         <icon>icon.jpg</icon>
