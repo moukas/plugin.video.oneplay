@@ -99,10 +99,10 @@ def send_keepalive_request(keepalive, addon):
             xbmc.log('Oneplay > ' + str(response.status))
         return True
     except (URLError, socket.timeout, TimeoutError, ssl.SSLError, OSError) as error:
-        xbmc.log('Oneplay > Keepalive chyba: ' + str(error))
+        xbmc.log('Oneplay > Keepalive chyba: ' + str(error), level=xbmc.LOGWARNING)
         return False
     except Exception as error:
-        xbmc.log('Oneplay > Keepalive neocekavana chyba: ' + str(error))
+        xbmc.log('Oneplay > Keepalive neocekavana chyba: ' + str(error), level=xbmc.LOGWARNING)
         return False
 
 def probe_manifest(url):
@@ -111,10 +111,10 @@ def probe_manifest(url):
         response.read(1)
         return True
     except (URLError, socket.timeout, TimeoutError, ssl.SSLError, OSError) as error:
-        xbmc.log('Oneplay > Manifest probe chyba: ' + str(error))
+        xbmc.log('Oneplay > Manifest probe chyba: ' + str(error), level=xbmc.LOGWARNING)
         return False
     except Exception as error:
-        xbmc.log('Oneplay > Manifest probe neocekavana chyba: ' + str(error))
+        xbmc.log('Oneplay > Manifest probe neocekavana chyba: ' + str(error), level=xbmc.LOGWARNING)
         return False
 
 def build_list_item(type, url, drm):
@@ -185,9 +185,9 @@ def resolve_playback(addon, post, mode):
 def restart_playback(addon, player, post, mode):
     refreshed = resolve_playback(addon, post, mode)
     if refreshed is None:
-        xbmc.log('Oneplay > Obnoveni streamu selhalo, nova URL neni dostupna')
+        xbmc.log('Oneplay > Obnoveni streamu selhalo, nova URL neni dostupna', level=xbmc.LOGWARNING)
         return None
-    xbmc.log('Oneplay > Obnovuji stream s novou URL')
+    xbmc.log('Oneplay > Obnovuji stream s novou URL', level=xbmc.LOGWARNING)
     xbmcgui.Dialog().notification('Oneplay', 'Obnovuji stream', xbmcgui.NOTIFICATION_INFO, 2500)
     list_item = build_list_item(refreshed['type'], refreshed['url'], refreshed['drm'])
     player.stop()
@@ -222,7 +222,7 @@ def monitor_playback(playback, addon, player, post, mode):
         )
         if should_retry:
             reason = 'keepalive' if keepalive_failures >= KEEPALIVE_FAILURE_THRESHOLD else 'manifest'
-            xbmc.log('Oneplay > Detekovan problem se streamem (%s), zkousim jeden reconnect' % reason)
+            xbmc.log('Oneplay > Detekovan problem se streamem (%s), zkousim jeden reconnect' % reason, level=xbmc.LOGWARNING)
             refreshed = restart_playback(addon, player, post, mode)
             retry_count += 1
             if refreshed is not None:
@@ -233,7 +233,7 @@ def monitor_playback(playback, addon, player, post, mode):
                 continue
 
         if keepalive_failures >= KEEPALIVE_FAILURE_THRESHOLD:
-            xbmc.log('Oneplay > Keepalive vypnut po %s neúspěšných pokusech' % KEEPALIVE_FAILURE_THRESHOLD)
+            xbmc.log('Oneplay > Keepalive vypnut po %s neúspěšných pokusech' % KEEPALIVE_FAILURE_THRESHOLD, level=xbmc.LOGWARNING)
             break
         time.sleep(HEALTHCHECK_INTERVAL)
 
